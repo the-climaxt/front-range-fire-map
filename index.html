@@ -640,15 +640,22 @@ fetch(blmUrl).then(r=>r.json()).then(gj=>{
 }).catch(e=>{statusMsg.innerHTML+='<div>⚠ BLM feed could not load ('+e+').</div>';});
 
 // ---- Live Red Flag Warnings (National Weather Service) ----
+// NWS Red Flag alerts carry NO geometry (just zone codes), so we fetch each
+// affected fire-weather zone's outline and shade it.
+const RFWSTYLE={color:'#b71c1c',weight:2,fillColor:'#b71c1c',fillOpacity:0.18,dashArray:'5 4'};
+function rfwPopup(txt){return '<div class="pop"><h3>⚠ Red Flag Warning</h3><div class="why">'+txt+' Issued by the National Weather Service. Counties with auto-rules here are under fire restrictions while this is active.</div><div class="note">→ <a href="https://www.weather.gov/fire/" target="_blank" rel="noopener">NWS fire weather</a></div></div>';}
 const rfwUrl='https://api.weather.gov/alerts/active?area=CO&event='+encodeURIComponent('Red Flag Warning');
 fetch(rfwUrl,{headers:{'Accept':'application/geo+json'}}).then(r=>r.json()).then(d=>{
-  const feats=(d&&d.features)||[]; const names=[];
-  feats.forEach(ft=>{const p=ft.properties||{}; names.push(p.areaDesc||'Red Flag area');
-    if(ft.geometry){L.geoJSON(ft.geometry,{style:{color:'#b71c1c',weight:2,fillColor:'#b71c1c',fillOpacity:0.12,dashArray:'5 4'}}).bindPopup('<div class="pop"><h3>⚠ Red Flag Warning</h3><div class="note">'+(p.headline||'')+'</div><div class="why">Issued by the National Weather Service. Counties with auto-rules are under fire restrictions while this is active. Ends: '+(p.ends||p.expires||'see NWS')+'.</div></div>').addTo(map);}});
+  const feats=(d&&d.features)||[]; const names=[]; const zoneUrls=new Set();
+  feats.forEach(ft=>{const p=ft.properties||{}; names.push(p.areaDesc||'Red Flag area'); (p.affectedZones||[]).forEach(u=>zoneUrls.add(u));
+    if(ft.geometry){L.geoJSON(ft.geometry,{style:RFWSTYLE}).bindPopup(rfwPopup(p.headline||'')).addTo(map);}});
   let box=document.getElementById('rfwbox'); if(!box){box=document.createElement('div');box.id='rfwbox';areaList.parentNode.insertBefore(box,areaList);}
-  if(feats.length){box.innerHTML='<div class="callout" style="margin-top:6px;background:#fde7e7;border-color:#f5cdc6"><b>⚠ Active Red Flag Warning(s):</b><br>'+[...new Set(names)].join('; ')+'<br><span class="note">Auto-rule counties are restricted while active.</span></div>';}
+  if(feats.length){box.innerHTML='<div class="callout" style="margin-top:6px;background:#fde7e7;border-color:#f5cdc6"><b>⚠ '+feats.length+' active Red Flag Warning(s):</b><br>'+[...new Set(names)].join('; ')+'<br><span class="note">Auto-rule counties are restricted while active.</span></div>';}
   else{box.innerHTML='<div class="callout" style="margin-top:6px"><b>No active Red Flag Warnings</b> in Colorado right now.</div>';}
-}).catch(e=>{});
+  Promise.all([...zoneUrls].map(u=>fetch(u,{headers:{'Accept':'application/geo+json'}}).then(r=>r.json()).catch(()=>null))).then(zs=>{
+    zs.forEach(z=>{ if(z&&z.geometry){ L.geoJSON(z.geometry,{style:RFWSTYLE}).bindPopup(rfwPopup(((z.properties&&z.properties.name)||'Fire-weather zone')+' — under an active Red Flag Warning.')).addTo(map);}});
+  }).catch(e=>{});
+}).catch(e=>{statusMsg.innerHTML+='<div>⚠ Could not load Red Flag Warnings ('+e+').</div>';});
 
 function refreshSummary(){
   const green=rendered.filter(r=>r.stage==='None').map(r=>r.name);
