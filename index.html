@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Front Range Fire Restrictions &mdash; Can I Have a Campfire?</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root{--none:#2e7d32;--s1:#f9a825;--s2:#e65100;--s3:#c62828;--unk:#9e9e9e;--ink:#1a1a1a;--panel:#fff;--muted:#5a5a5a;--line:#e2e2e2;}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink)}
+  #app{display:flex;flex-direction:column;height:100vh}
+  header{padding:10px 16px;background:#0f1d14;color:#fff;flex:0 0 auto}
+  header h1{margin:0;font-size:17px;font-weight:700}
+  header p{margin:3px 0 0;font-size:12.5px;color:#bcd2c2}
+  #main{flex:1 1 auto;display:flex;min-height:0}
+  #map{flex:1 1 auto}
+  #side{flex:0 0 320px;max-width:42%;overflow-y:auto;background:var(--panel);border-left:1px solid var(--line);padding:14px}
+  #side h2{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:0 0 8px}
+  .callout{background:#eaf5ec;border:1px solid #cfe6d4;border-radius:8px;padding:10px 12px;margin-bottom:14px}
+  .callout b{color:var(--none)}
+  .legend-row{display:flex;align-items:center;gap:8px;margin:5px 0;font-size:13px}
+  .sw{width:16px;height:16px;border-radius:3px;flex:0 0 auto;border:1px solid rgba(0,0,0,.25)}
+  .area{border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin-bottom:8px}
+  .area .nm{font-weight:600;font-size:13.5px}
+  .area .st{font-size:12px;font-weight:700;padding:1px 7px;border-radius:10px;color:#fff;display:inline-block;margin-top:3px}
+  .area .ds{font-size:12px;color:var(--muted);margin-top:5px;line-height:1.35}
+  .area a{color:#1565c0;text-decoration:none}
+  .area a:hover{text-decoration:underline}
+  footer{flex:0 0 auto;padding:7px 16px;background:#f4f4f4;border-top:1px solid var(--line);font-size:11px;color:var(--muted)}
+  .leaflet-popup-content{font-size:13px;line-height:1.4}
+  .pop-st{font-weight:700;padding:1px 7px;border-radius:10px;color:#fff;display:inline-block}
+  .pop h3{margin:0 0 4px;font-size:14px}
+  .pop .fire{margin:7px 0;padding:7px 9px;border-radius:6px;font-size:12.5px;line-height:1.4}
+  .pop .ok{background:#eaf5ec;border:1px solid #cfe6d4}
+  .pop .no{background:#fdecea;border:1px solid #f5cdc6}
+  .note{font-size:11.5px;color:var(--muted);margin-top:6px}
+  .badge{font-size:10px;font-weight:700;color:#fff;background:#37474f;border-radius:8px;padding:1px 6px;vertical-align:middle}
+  .live{background:#1565c0}
+  #status-msg{font-size:12px;color:var(--muted);margin-top:6px}
+  @media(max-width:720px){#main{flex-direction:column}#side{flex:none;max-width:none;width:100%;border-left:none;border-top:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Front Range Fire Restrictions &mdash; Can I have a campfire right now?</h1>
+    <p>Arapaho &amp; Roosevelt National Forest region (proof of concept). Green = open flames currently allowed. Always confirm with the official order before you go.</p>
+  </header>
+  <div id="main">
+    <div id="map"></div>
+    <aside id="side">
+      <div class="callout"><b>How to read this map.</b> Each area is colored by its current fire-restriction stage. Under <b>Stage 1+</b>, a dispersed campfire is <b>not</b> allowed (only permanent metal grates at developed sites). Look for <b>green</b> areas to find where a normal campfire is currently permitted.</div>
+      <h2>Legend</h2>
+      <div class="legend-row"><span class="sw" style="background:var(--none)"></span> No restrictions &mdash; campfire OK</div>
+      <div class="legend-row"><span class="sw" style="background:var(--s1)"></span> Stage 1 &mdash; developed-site grates only</div>
+      <div class="legend-row"><span class="sw" style="background:var(--s2)"></span> Stage 2 &mdash; no open fire at all</div>
+      <div class="legend-row"><span class="sw" style="background:var(--s3)"></span> Stage 3 / Ban / Closure</div>
+      <div class="legend-row"><span class="sw" style="background:var(--unk)"></span> Not tracked here &mdash; check link</div>
+      <h2 style="margin-top:16px">Current status by area</h2>
+      <div id="arealist"></div>
+      <div id="status-msg"></div>
+    </aside>
+  </div>
+  <footer id="foot"></footer>
+</div>
+<script>
+/* =====================================================================
+   EDIT YOUR STATUS HERE  --  no programming needed.
+   Change a "stage" or "status" value below, SAVE this file, refresh browser.
+   Valid stage values exactly:  "None"  "Stage 1"  "Stage 2"  "Stage 3"  "Burn Ban"
+   (BLM updates itself automatically from the live government feed.)
+   ===================================================================== */
+const USFS_STATUS = {
+  "021005": {
+    "name": "Canyon Lakes Ranger District",
+    "stage": "Stage 1",
+    "counties": "Larimer",
+    "order": "https://www.fs.usda.gov/r02/arp/alerts/stage-1-fire-restrictions-canyon-lakes-ranger-district"
+  },
+  "021001": {
+    "name": "Boulder Ranger District",
+    "stage": "Stage 1",
+    "counties": "Boulder, Gilpin",
+    "order": "https://www.fs.usda.gov/r02/arp/alerts/stage-1-fire-restrictions-boulder-and-clear-creek-ranger-districts"
+  },
+  "021007": {
+    "name": "Clear Creek Ranger District",
+    "stage": "Stage 1",
+    "counties": "Clear Creek, Jefferson, Gilpin",
+    "order": "https://www.fs.usda.gov/r02/arp/alerts/stage-1-fire-restrictions-boulder-and-clear-creek-ranger-districts"
+  },
+  "021008": {
+    "name": "Sulphur Ranger District",
+    "stage": "None",
+    "counties": "Grand",
+    "order": "https://www.fs.usda.gov/r02/arp/alerts/fire-restrictions"
+  },
+  "021006": {
+    "name": "Pawnee National Grassland",
+    "stage": "Stage 1",
+    "counties": "Weld",
+    "order": "https://www.fs.usda.gov/r02/arp/alerts/stage-1-fire-restrictions-pawnee-national-grassland"
+  }
+};
+const COUNTY_STATUS = {
+  "Larimer County": {
+    "status": "Restrictions in effect",
+    "url": "https://aegis.larimer.gov/pages/fire-danger"
+  },
+  "Boulder County": {
+    "status": "Restrictions in effect (portions)",
+    "url": "https://www.bouldercounty.org/safety/emergency/"
+  },
+  "Gilpin County": {
+    "status": "Restrictions in effect",
+    "url": "https://gilpincounty.colorado.gov/"
+  },
+  "Grand County": {
+    "status": "Restrictions in effect",
+    "url": "https://www.co.grand.co.us/156/Office-of-Emergency-Management"
+  },
+  "Jackson County": {
+    "status": "Restrictions in effect",
+    "url": "https://jacksoncountyco.gov/"
+  },
+  "Clear Creek County": {
+    "status": "Restrictions in effect",
+    "url": "http://www.co.clear-creek.co.us/index.aspx?nid=97"
+  },
+  "Jefferson County": {
+    "status": "No order reported",
+    "url": "https://www.jeffcosheriffco.gov/safety/wildland-fire/fire-restrictions"
+  }
+};
+/* ================= end of the part you edit ================= */
+const COUNTIES = {"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": {"type": "MultiPolygon", "coordinates": [[[[-105.0577, 39.9747], [-105.0529, 39.9578], [-105.0826, 39.9593], [-105.0577, 39.9747]]], [[[-105.2895, 40.2628], [-105.0551, 40.2618], [-105.0528, 39.9777], [-105.088, 39.9598], [-105.072, 39.9577], [-105.0766, 39.9433], [-105.1092, 39.9361], [-105.1094, 39.9255], [-105.1188, 39.9338], [-105.1093, 39.9506], [-105.1208, 39.9513], [-105.1095, 39.957], [-105.128, 39.9542], [-105.1282, 39.9396], [-105.1471, 39.9289], [-105.1472, 39.9139], [-105.3959, 39.9129], [-105.4002, 39.9351], [-105.4188, 39.9287], [-105.44, 39.9384], [-105.4574, 39.9322], [-105.6758, 39.9325], [-105.6935, 39.9415], [-105.6832, 39.9929], [-105.6912, 39.9973], [-105.6897, 40.0155], [-105.6616, 40.0165], [-105.6407, 40.035], [-105.6375, 40.0459], [-105.6511, 40.0585], [-105.6326, 40.0815], [-105.6367, 40.107], [-105.6266, 40.1187], [-105.6357, 40.146], [-105.6677, 40.1583], [-105.6704, 40.1846], [-105.6776, 40.1885], [-105.6703, 40.2194], [-105.6632, 40.22], [-105.6691, 40.2242], [-105.66, 40.2488], [-105.644, 40.2499], [-105.6533, 40.2605], [-105.2895, 40.2628]]], [[[-105.1074, 39.9579], [-105.1092, 39.9562], [-105.091, 39.9577], [-105.1074, 39.9579]]]]}, "properties": {"NAME": "Boulder County", "FIPS": "08013"}}, {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[-105.6811, 39.8473], [-105.6333, 39.8437], [-105.629, 39.8327], [-105.5956, 39.8161], [-105.578, 39.8225], [-105.5785, 39.8055], [-105.5467, 39.788], [-105.5359, 39.7709], [-105.4949, 39.7641], [-105.493, 39.757], [-105.4279, 39.7558], [-105.4214, 39.7459], [-105.3987, 39.7473], [-105.399, 39.5661], [-105.8366, 39.5688], [-105.8316, 39.5781], [-105.7814, 39.6009], [-105.776, 39.6107], [-105.7846, 39.6312], [-105.8487, 39.6442], [-105.8648, 39.6672], [-105.8849, 39.6571], [-105.9267, 39.6736], [-105.9214, 39.7099], [-105.8824, 39.7403], [-105.8805, 39.7593], [-105.8927, 39.7826], [-105.8875, 39.7968], [-105.823, 39.7856], [-105.799, 39.8034], [-105.7639, 39.795], [-105.7359, 39.805], [-105.7134, 39.8382], [-105.6964, 39.8389], [-105.6904, 39.852], [-105.6811, 39.8473]]]}, "properties": {"NAME": "Clear Creek County", "FIPS": "08019"}}, {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[-105.4398, 39.9383], [-105.4188, 39.9287], [-105.398, 39.9349], [-105.398, 39.746], [-105.4066, 39.7515], [-105.4214, 39.7459], [-105.4279, 39.7558], [-105.493, 39.757], [-105.4949, 39.7641], [-105.5394, 39.7723], [-105.5467, 39.788], [-105.5785, 39.8055], [-105.578, 39.8225], [-105.5956, 39.8161], [-105.629, 39.8327], [-105.6333, 39.8437], [-105.6867, 39.8496], [-105.7008, 39.8789], [-105.6758, 39.9325], [-105.4574, 39.9322], [-105.4398, 39.9383]]]}, "properties": {"NAME": "Gilpin County", "FIPS": "08047"}}, {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[-105.847, 40.4828], [-105.8068, 40.4739], [-105.8058, 40.4473], [-105.8173, 40.4243], [-105.791, 40.3986], [-105.7873, 40.3809], [-105.7583, 40.3524], [-105.7017, 40.3243], [-105.7021, 40.3121], [-105.6902, 40.3087], [-105.6812, 40.292], [-105.6865, 40.2883], [-105.6824, 40.2728], [-105.644, 40.2499], [-105.66, 40.2488], [-105.6691, 40.2242], [-105.6632, 40.22], [-105.6703, 40.2194], [-105.6777, 40.1907], [-105.6704, 40.1846], [-105.6677, 40.1583], [-105.6357, 40.146], [-105.6261, 40.1274], [-105.6367, 40.107], [-105.6326, 40.0815], [-105.6511, 40.0585], [-105.6374, 40.0452], [-105.6519, 40.0209], [-105.6897, 40.0155], [-105.6912, 39.9973], [-105.6832, 39.9929], [-105.6904, 39.9699], [-105.6851, 39.9587], [-105.6937, 39.9424], [-105.6751, 39.9333], [-105.6997, 39.8915], [-105.6904, 39.852], [-105.6964, 39.8389], [-105.717, 39.8355], [-105.7359, 39.805], [-105.766, 39.7949], [-105.799, 39.8034], [-105.823, 39.7856], [-105.8874, 39.797], [-105.8927, 39.7826], [-105.8805, 39.7593], [-105.8824, 39.7403], [-105.9083, 39.7263], [-105.9251, 39.6984], [-105.9456, 39.6889], [-105.951, 39.6952], [-106.013, 39.6863], [-106.0267, 39.6895], [-106.0416, 39.716], [-106.0586, 39.7247], [-106.0841, 39.8067], [-106.125, 39.8421], [-106.1495, 39.8396], [-106.1931, 39.8588], [-106.252, 39.9147], [-106.3954, 39.914], [-106.3953, 39.9246], [-106.6266, 39.9248], [-106.6261, 40], [-106.637, 40.0021], [-106.6323, 40.3416], [-106.6528, 40.3416], [-106.6522, 40.4452], [-106.6386, 40.4323], [-106.6235, 40.4317], [-106.6292, 40.4189], [-106.6123, 40.3794], [-106.6025, 40.3761], [-106.5946, 40.3832], [-106.5593, 40.3781], [-106.5349, 40.3651], [-106.5253, 40.3858], [-106.5123, 40.3868], [-106.4899, 40.4116], [-106.4773, 40.4038], [-106.4813, 40.3894], [-106.4644, 40.3759], [-106.457, 40.3545], [-106.4433, 40.3465], [-106.4218, 40.3528], [-106.3897, 40.3457], [-106.3565, 40.3581], [-106.337, 40.3397], [-106.3058, 40.3285], [-106.2939, 40.3376], [-106.2987, 40.3494], [-106.2927, 40.3569], [-106.278, 40.3537], [-106.2657, 40.361], [-106.2301, 40.3234], [-106.1892, 40.3265], [-106.1705, 40.344], [-106.1368, 40.3301], [-106.1016, 40.3538], [-106.0857, 40.3472], [-106.0186, 40.3733], [-106.0109, 40.3619], [-105.9867, 40.3646], [-105.9597, 40.3482], [-105.9544, 40.3603], [-105.9385, 40.3662], [-105.9466, 40.3851], [-105.9275, 40.391], [-105.9206, 40.4018], [-105.9033, 40.4008], [-105.8994, 40.4657], [-105.8918, 40.4767], [-105.847, 40.4828]]]}, "properties": {"NAME": "Grand County", "FIPS": "08049"}}, {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[-106.3212, 40.9991], [-106.1906, 40.9976], [-106.1954, 40.9882], [-106.1849, 40.9638], [-106.1853, 40.934], [-106.1313, 40.8966], [-106.1307, 40.8739], [-106.1047, 40.8603], [-106.1081, 40.8522], [-106.0985, 40.8497], [-106.0997, 40.8421], [-106.0577, 40.8171], [-106.0454, 40.7919], [-106.0297, 40.7816], [-106.0223, 40.7547], [-105.9906, 40.7272], [-105.9887, 40.7096], [-105.9726, 40.6956], [-105.9714, 40.6808], [-105.9485, 40.6423], [-105.947, 40.6167], [-105.9299, 40.6058], [-105.9223, 40.5742], [-105.9109, 40.5664], [-105.9083, 40.5161], [-105.8791, 40.5232], [-105.8523, 40.5066], [-105.8572, 40.4833], [-105.8918, 40.4767], [-105.8994, 40.4657], [-105.9033, 40.4008], [-105.9206, 40.4018], [-105.9275, 40.391], [-105.9466, 40.3851], [-105.9385, 40.3662], [-105.9544, 40.3603], [-105.9597, 40.3482], [-105.9867, 40.3646], [-106.0109, 40.3619], [-106.0186, 40.3733], [-106.0857, 40.3472], [-106.1016, 40.3538], [-106.1368, 40.3301], [-106.1705, 40.344], [-106.1892, 40.3265], [-106.2301, 40.3234], [-106.2657, 40.361], [-106.278, 40.3537], [-106.2927, 40.3569], [-106.2987, 40.3494], [-106.2939, 40.3376], [-106.3058, 40.3285], [-106.337, 40.3397], [-106.3565, 40.3581], [-106.3897, 40.3457], [-106.4218, 40.3528], [-106.4433, 40.3465], [-106.457, 40.3545], [-106.4644, 40.3759], [-106.4813, 40.3894], [-106.4773, 40.4038], [-106.4899, 40.4116], [-106.5123, 40.3868], [-106.5253, 40.3858], [-106.5349, 40.3651], [-106.5593, 40.3781], [-106.6123, 40.3794], [-106.6292, 40.4189], [-106.6222, 40.4298], [-106.6519, 40.4422], [-106.6579, 40.4716], [-106.6674, 40.4737], [-106.6562, 40.4844], [-106.6556, 40.5085], [-106.6731, 40.5225], [-106.6699, 40.5345], [-106.6929, 40.5566], [-106.7024, 40.578], [-106.694, 40.5945], [-106.7062, 40.6156], [-106.7036, 40.6278], [-106.6868, 40.6347], [-106.6802, 40.648], [-106.6921, 40.6578], [-106.6811, 40.6752], [-106.6874, 40.6827], [-106.668, 40.6963], [-106.6695, 40.7288], [-106.6767, 40.7366], [-106.663, 40.743], [-106.6613, 40.7534], [-106.6697, 40.7617], [-106.6369, 40.7895], [-106.6355, 40.8114], [-106.664, 40.8282], [-106.6627, 40.8433], [-106.6546, 40.8491], [-106.6795, 40.8696], [-106.6859, 40.8858], [-106.7394, 40.8708], [-106.7468, 40.8821], [-106.7409, 40.8898], [-106.7701, 40.8965], [-106.769, 40.9041], [-106.8098, 40.8998], [-106.8063, 40.9067], [-106.8248, 40.932], [-106.8294, 40.9243], [-106.8524, 40.9252], [-106.8727, 40.9672], [-106.8706, 40.9812], [-106.8571, 40.9813], [-106.8505, 40.9907], [-106.8615, 41], [-106.3212, 40.9991]]]}, "properties": {"NAME": "Jackson County", "FIPS": "08057"}}, {"type": "Feature", "geometry": {"type": "MultiPolygon", "coordinates": [[[[-105.0535, 39.6243], [-105.0558, 39.626], [-105.0533, 39.628], [-105.0535, 39.6243]]], [[[-105.0809, 39.6357], [-105.0809, 39.635], [-105.0816, 39.635], [-105.0809, 39.6357]]], [[[-105.0534, 39.6305], [-105.0591, 39.6388], [-105.0534, 39.6388], [-105.0534, 39.6305]]], [[[-105.0626, 39.6524], [-105.0636, 39.6519], [-105.0635, 39.653], [-105.0626, 39.6524]]], [[[-105.0645, 39.6533], [-105.065, 39.6538], [-105.0639, 39.6538], [-105.0645, 39.6533]]], [[[-105.2386, 39.9144], [-105.1472, 39.9139], [-105.1657, 39.9105], [-105.1661, 39.9015], [-105.1652, 39.8915], [-105.147, 39.8892], [-105.1289, 39.8904], [-105.1287, 39.9], [-105.1474, 39.9001], [-105.1471, 39.914], [-105.1086, 39.9141], [-105.0906, 39.8989], [-105.0717, 39.8998], [-105.0718, 39.907], [-105.0529, 39.9142], [-105.0533, 39.7911], [-105.065, 39.7902], [-105.0532, 39.7838], [-105.0532, 39.6824], [-105.0626, 39.6793], [-105.0533, 39.6678], [-105.0815, 39.6686], [-105.0815, 39.6621], [-105.0673, 39.6569], [-105.0708, 39.6496], [-105.0536, 39.6512], [-105.0721, 39.646], [-105.0733, 39.6366], [-105.1099, 39.6351], [-105.1099, 39.6271], [-105.0913, 39.6242], [-105.081, 39.6313], [-105.0651, 39.6201], [-105.097, 39.6143], [-105.0581, 39.6144], [-105.0535, 39.6209], [-105.0542, 39.5661], [-105.0488, 39.5661], [-105.0764, 39.5401], [-105.0868, 39.4934], [-105.1177, 39.4854], [-105.1349, 39.471], [-105.1242, 39.455], [-105.1236, 39.4341], [-105.171, 39.4078], [-105.164, 39.3915], [-105.1735, 39.3834], [-105.1666, 39.3618], [-105.1878, 39.3342], [-105.1822, 39.3302], [-105.1985, 39.31], [-105.196, 39.3021], [-105.2077, 39.2982], [-105.2025, 39.2936], [-105.2206, 39.2692], [-105.2174, 39.2604], [-105.2344, 39.2553], [-105.2356, 39.2443], [-105.2535, 39.2433], [-105.2636, 39.2291], [-105.2599, 39.2106], [-105.2823, 39.201], [-105.2875, 39.1791], [-105.3132, 39.1599], [-105.3284, 39.13], [-105.3979, 39.1296], [-105.3979, 39.9129], [-105.2386, 39.9144]]]]}, "properties": {"NAME": "Jefferson County", "FIPS": "08059"}}, {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[-105.1571, 40.9983], [-104.9434, 40.9982], [-104.9456, 40.3491], [-105.0567, 40.3493], [-105.0551, 40.2618], [-105.391, 40.2579], [-105.6533, 40.2605], [-105.6782, 40.2681], [-105.6865, 40.2883], [-105.6812, 40.292], [-105.6902, 40.3087], [-105.7021, 40.3121], [-105.7017, 40.3243], [-105.7741, 40.3652], [-105.7907, 40.3863], [-105.7917, 40.3997], [-105.8173, 40.4243], [-105.8058, 40.4473], [-105.8074, 40.4745], [-105.8549, 40.4863], [-105.8523, 40.5066], [-105.8691, 40.5207], [-105.9083, 40.5161], [-105.9109, 40.5664], [-105.9223, 40.5742], [-105.9299, 40.6058], [-105.947, 40.6167], [-105.9485, 40.6423], [-105.9714, 40.6808], [-105.9726, 40.6956], [-105.9887, 40.7096], [-105.9906, 40.7272], [-106.0223, 40.7547], [-106.0297, 40.7816], [-106.0454, 40.7919], [-106.0577, 40.8171], [-106.0997, 40.8421], [-106.0985, 40.8497], [-106.1081, 40.8522], [-106.1047, 40.8603], [-106.1307, 40.8739], [-106.1313, 40.8966], [-106.1853, 40.934], [-106.1849, 40.9638], [-106.1954, 40.9882], [-106.1906, 40.9976], [-105.1571, 40.9983]]]}, "properties": {"NAME": "Larimer County", "FIPS": "08069"}}]};
+const META = {"usfs_as_of": "April 20, 2026 (forest order page)", "county_as_of": "June 15, 2026 (COEmergency)", "build_date": "2026-06-29"};
+
+const COLOR={None:'#2e7d32','Stage 1':'#f9a825','Stage 2':'#e65100','Stage 3':'#c62828','Burn Ban':'#c62828',Unknown:'#9e9e9e'};
+function colorFor(s){return COLOR[s]||COLOR.Unknown;}
+function fireGuidance(stage){
+  switch(stage){
+    case 'None': return {ok:true,txt:'Campfire OK in a contained ring (follow local rules). Charcoal & gas stoves OK.'};
+    case 'Stage 1': return {ok:false,txt:'Campfire/charcoal ONLY in permanent metal grates at developed sites. A dispersed campfire is NOT allowed. Gas/propane stoves with a shut-off valve are OK.'};
+    case 'Stage 2': return {ok:false,txt:'No open fire or charcoal anywhere - including developed sites. Gas/propane stoves with a shut-off valve usually still OK. Outdoor smoking restricted.'};
+    case 'Stage 3': return {ok:false,txt:'All fire prohibited; the area may be closed to entry.'};
+    case 'Burn Ban': return {ok:false,txt:'Open burning prohibited.'};
+    default: return {ok:null,txt:'Restriction level not tracked on this map yet - open the official link to confirm.'};
+  }
+}
+function stageLabel(s){return s==='None'?'No restrictions':s;}
+const map=L.map('map',{zoomControl:true}).setView([40.05,-105.65],9);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:17,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+const areaList=document.getElementById('arealist');
+const statusMsg=document.getElementById('status-msg');
+const rendered=[];
+function popupHtml(title,stage,sub,orderUrl,kind){
+  const g=fireGuidance(stage); const cls=g.ok===true?'ok':(g.ok===false?'no':'');
+  let h='<div class="pop"><h3>'+title+'</h3><span class="pop-st" style="background:'+colorFor(stage)+'">'+stageLabel(stage)+'</span>';
+  if(kind==='blm') h+=' <span class="badge live">LIVE feed</span>';
+  if(sub) h+='<div class="note">'+sub+'</div>';
+  h+='<div class="fire '+cls+'">🔥 '+g.txt+'</div>';
+  if(orderUrl) h+='<div class="note">→ <a href="'+orderUrl+'" target="_blank" rel="noopener">Official order / details</a></div>';
+  return h+'</div>';
+}
+function addAreaRow(name,stage,sub,url){
+  rendered.push({name,stage});
+  const d=document.createElement('div'); d.className='area';
+  let h='<div class="nm">'+name+'</div><span class="st" style="background:'+colorFor(stage)+'">'+stageLabel(stage)+'</span>';
+  if(sub) h+='<div class="ds">'+sub+'</div>';
+  if(url) h+='<div class="ds">→ <a href="'+url+'" target="_blank" rel="noopener">Check / official source</a></div>';
+  d.innerHTML=h; areaList.appendChild(d);
+}
+// Counties (baked)
+L.geoJSON(COUNTIES,{
+  style:f=>{const s=(COUNTY_STATUS[f.properties.NAME]||{});const known=!!s.status;const ho=known&&s.status.indexOf('No order')<0;return {color:'#444',weight:1,fillColor:known?(ho?'#f9a825':'#2e7d32'):'#9e9e9e',fillOpacity:0.10,dashArray:'4 3'};},
+  onEachFeature:(f,layer)=>{const nm=f.properties.NAME;const s=COUNTY_STATUS[nm]||{};const ho=s.status&&s.status.indexOf('No order')<0;const sub='County jurisdiction (private / unincorporated land). '+(s.status||'Status unknown')+'. A county order can differ from the federal land it surrounds.';layer.bindPopup('<div class="pop"><h3>'+nm+'</h3><span class="pop-st" style="background:'+(ho?'#f9a825':(s.status?'#2e7d32':'#9e9e9e'))+'">'+(s.status||'Unknown')+'</span><div class="note">'+sub+'</div>'+(s.url?'<div class="note">→ <a href="'+s.url+'" target="_blank" rel="noopener">County fire page</a></div>':'')+'</div>');}
+}).addTo(map);
+Object.keys(COUNTY_STATUS).forEach(nm=>{const s=COUNTY_STATUS[nm];const ho=s.status.indexOf('No order')<0;addAreaRow(nm+' (county)',ho?'Stage 1':'None',s.status+' - level varies, check county',s.url);});
+// USFS ranger districts (live boundaries)
+const usfsUrl="https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_RangerDistricts_01/MapServer/0/query?where="+encodeURIComponent("forestname LIKE '%Roosevelt%'")+"&outFields=districtname,districtorgcode&outSR=4326&maxAllowableOffset=0.001&f=geojson";
+fetch(usfsUrl).then(r=>r.json()).then(gj=>{
+  L.geoJSON(gj,{style:f=>{const s=USFS_STATUS[f.properties.districtorgcode]||{stage:'Unknown'};return {color:'#1b3a26',weight:1.5,fillColor:colorFor(s.stage),fillOpacity:0.5};},
+    onEachFeature:(f,layer)=>{const code=f.properties.districtorgcode;const s=USFS_STATUS[code]||{name:f.properties.districtname,stage:'Unknown'};const sub='National Forest land (dispersed-camping country)'+(s.counties?(' &middot; in '+s.counties+' Co.'):'')+'<br><span class="note">USFS status as of '+META.usfs_as_of+'</span>';layer.bindPopup(popupHtml(s.name||f.properties.districtname,s.stage,sub,s.order,'usfs'));}
+  }).addTo(map);
+  Object.keys(USFS_STATUS).forEach(code=>{const s=USFS_STATUS[code];addAreaRow(s.name+' (USFS)',s.stage,'National Forest &middot; '+s.counties+' Co.',s.order);});
+  refreshCampfireSummary();
+}).catch(e=>{statusMsg.innerHTML+='<div>⚠ Could not load live USFS boundaries ('+e+'). If layers are blank, see the local-server step in the instructions. USFS status still listed below.</div>';Object.keys(USFS_STATUS).forEach(code=>{const s=USFS_STATUS[code];addAreaRow(s.name+' (USFS)',s.stage,'National Forest &middot; '+s.counties+' Co. (boundary unavailable)',s.order);});refreshCampfireSummary();});
+// BLM (live feed)
+const blmUrl="https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/blm_co_fire_restrictions_VIEW_new/FeatureServer/0/query?where="+encodeURIComponent("COUNTY IN ('LARIMER','BOULDER','GRAND','GILPIN','CLEAR CREEK','JACKSON','JEFFERSON')")+"&outFields=PARENT_NAME,FieldOffice,COUNTY,restriction&outSR=4326&f=geojson";
+function blmStage(code){if(code==null)return 'Unknown';const c=(''+code).trim();if(c==='0'||c.toLowerCase()==='none')return 'None';if(c==='1'||/stage\s*1/i.test(c))return 'Stage 1';if(c==='2'||/stage\s*2/i.test(c))return 'Stage 2';if(c==='3'||/stage\s*3/i.test(c))return 'Stage 3';if(/ban/i.test(c))return 'Burn Ban';return 'Unknown';}
+function titleCase(s){return (s||'').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());}
+fetch(blmUrl).then(r=>r.json()).then(gj=>{
+  if(!gj.features||!gj.features.length){statusMsg.innerHTML+='<div>No BLM parcels returned for this region.</div>';return;}
+  const seen={};
+  L.geoJSON(gj,{style:f=>{const st=blmStage(f.properties.restriction);return {color:'#3a2c10',weight:1,fillColor:colorFor(st),fillOpacity:0.55};},
+    onEachFeature:(f,layer)=>{const st=blmStage(f.properties.restriction);const fo=titleCase(f.properties.FieldOffice||'BLM');const sub='BLM land &middot; '+fo+' &middot; '+titleCase(f.properties.COUNTY||'')+' Co.';layer.bindPopup(popupHtml('BLM - '+fo,st,sub,'https://www.blm.gov/programs/public-safety-and-fire/fire-and-aviation/regional-information/colorado','blm'));if(!(fo in seen))seen[fo]=st;}
+  }).addTo(map);
+  Object.keys(seen).forEach(fo=>addAreaRow('BLM - '+fo,seen[fo],'BLM land (live feed)',null));
+  refreshCampfireSummary();
+}).catch(e=>{statusMsg.innerHTML+='<div>⚠ Could not load live BLM feed ('+e+').</div>';});
+function refreshCampfireSummary(){
+  const green=rendered.filter(r=>r.stage==='None').map(r=>r.name);
+  let html='<div class="callout" style="margin-top:6px"><b>🔥 Campfire currently allowed in:</b><br>';
+  html+=green.length?green.join(', '):'No areas in this region currently allow an open campfire. Use a gas stove, or check back.';
+  html+='</div>';
+  let box=document.getElementById('greenbox');
+  if(!box){box=document.createElement('div');box.id='greenbox';areaList.parentNode.insertBefore(box,areaList);}
+  box.innerHTML=html;
+}
+document.getElementById('foot').innerHTML='Proof of concept built '+META.build_date+'. BLM = live official feed. USFS status as of '+META.usfs_as_of+'; county status as of '+META.county_as_of+' (edit the status table to update). Boundaries: USFS EDW, Esri/US Census. Informational only - always confirm with the official order linked in each popup before lighting any fire.';
+</script>
+</body>
+</html>
