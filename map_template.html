@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Front Range Fire Restrictions &mdash; Can I Have a Campfire?</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root{--none:#2e7d32;--s1:#f9a825;--s2:#e65100;--s3:#c62828;--unk:#9e9e9e;--ink:#1a1a1a;--panel:#fff;--muted:#5a5a5a;--line:#e2e2e2;}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink)}
+  #app{display:flex;flex-direction:column;height:100vh}
+  header{padding:10px 16px;background:#0f1d14;color:#fff;flex:0 0 auto}
+  header h1{margin:0;font-size:17px;font-weight:700}
+  header p{margin:3px 0 0;font-size:12.5px;color:#bcd2c2}
+  #main{flex:1 1 auto;display:flex;min-height:0}
+  #map{flex:1 1 auto}
+  #side{flex:0 0 320px;max-width:42%;overflow-y:auto;background:var(--panel);border-left:1px solid var(--line);padding:14px}
+  #side h2{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:0 0 8px}
+  .callout{background:#eaf5ec;border:1px solid #cfe6d4;border-radius:8px;padding:10px 12px;margin-bottom:14px}
+  .callout b{color:var(--none)}
+  .legend-row{display:flex;align-items:center;gap:8px;margin:5px 0;font-size:13px}
+  .sw{width:16px;height:16px;border-radius:3px;flex:0 0 auto;border:1px solid rgba(0,0,0,.25)}
+  .area{border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin-bottom:8px}
+  .area .nm{font-weight:600;font-size:13.5px}
+  .area .st{font-size:12px;font-weight:700;padding:1px 7px;border-radius:10px;color:#fff;display:inline-block;margin-top:3px}
+  .area .ds{font-size:12px;color:var(--muted);margin-top:5px;line-height:1.35}
+  .area a{color:#1565c0;text-decoration:none}
+  .area a:hover{text-decoration:underline}
+  footer{flex:0 0 auto;padding:7px 16px;background:#f4f4f4;border-top:1px solid var(--line);font-size:11px;color:var(--muted)}
+  .leaflet-popup-content{font-size:13px;line-height:1.4}
+  .pop-st{font-weight:700;padding:1px 7px;border-radius:10px;color:#fff;display:inline-block}
+  .pop h3{margin:0 0 4px;font-size:14px}
+  .pop .fire{margin:7px 0;padding:7px 9px;border-radius:6px;font-size:12.5px;line-height:1.4}
+  .pop .ok{background:#eaf5ec;border:1px solid #cfe6d4}
+  .pop .no{background:#fdecea;border:1px solid #f5cdc6}
+  .note{font-size:11.5px;color:var(--muted);margin-top:6px}
+  .badge{font-size:10px;font-weight:700;color:#fff;background:#37474f;border-radius:8px;padding:1px 6px;vertical-align:middle}
+  .live{background:#1565c0}
+  #status-msg{font-size:12px;color:var(--muted);margin-top:6px}
+  @media(max-width:720px){#main{flex-direction:column}#side{flex:none;max-width:none;width:100%;border-left:none;border-top:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Front Range Fire Restrictions &mdash; Can I have a campfire right now?</h1>
+    <p>Arapaho &amp; Roosevelt National Forest region (proof of concept). Green = open flames currently allowed. Always confirm with the official order before you go.</p>
+  </header>
+  <div id="main">
+    <div id="map"></div>
+    <aside id="side">
+      <div class="callout"><b>How to read this map.</b> Each area is colored by its current fire-restriction stage. Under <b>Stage 1+</b>, a dispersed campfire is <b>not</b> allowed (only permanent metal grates at developed sites). Look for <b>green</b> areas to find where a normal campfire is currently permitted.</div>
+      <h2>Legend</h2>
+      <div class="legend-row"><span class="sw" style="background:var(--none)"></span> No restrictions &mdash; campfire OK</div>
+      <div class="legend-row"><span class="sw" style="background:var(--s1)"></span> Stage 1 &mdash; developed-site grates only</div>
+      <div class="legend-row"><span class="sw" style="background:var(--s2)"></span> Stage 2 &mdash; no open fire at all</div>
+      <div class="legend-row"><span class="sw" style="background:var(--s3)"></span> Stage 3 / Ban / Closure</div>
+      <div class="legend-row"><span class="sw" style="background:var(--unk)"></span> Not tracked here &mdash; check link</div>
+      <h2 style="margin-top:16px">Current status by area</h2>
+      <div id="arealist"></div>
+      <div id="status-msg"></div>
+    </aside>
+  </div>
+  <footer id="foot"></footer>
+</div>
+<script>
+/* =====================================================================
+   EDIT YOUR STATUS HERE  --  no programming needed.
+   Change a "stage" or "status" value below, SAVE this file, refresh browser.
+   Valid stage values exactly:  "None"  "Stage 1"  "Stage 2"  "Stage 3"  "Burn Ban"
+   (BLM updates itself automatically from the live government feed.)
+   ===================================================================== */
+const USFS_STATUS = __USFS__;
+const COUNTY_STATUS = __COUNTY__;
+/* ================= end of the part you edit ================= */
+const COUNTIES = __COUNTIES__;
+const META = __META__;
+
+const COLOR={None:'#2e7d32','Stage 1':'#f9a825','Stage 2':'#e65100','Stage 3':'#c62828','Burn Ban':'#c62828',Unknown:'#9e9e9e'};
+function colorFor(s){return COLOR[s]||COLOR.Unknown;}
+function fireGuidance(stage){
+  switch(stage){
+    case 'None': return {ok:true,txt:'Campfire OK in a contained ring (follow local rules). Charcoal & gas stoves OK.'};
+    case 'Stage 1': return {ok:false,txt:'Campfire/charcoal ONLY in permanent metal grates at developed sites. A dispersed campfire is NOT allowed. Gas/propane stoves with a shut-off valve are OK.'};
+    case 'Stage 2': return {ok:false,txt:'No open fire or charcoal anywhere - including developed sites. Gas/propane stoves with a shut-off valve usually still OK. Outdoor smoking restricted.'};
+    case 'Stage 3': return {ok:false,txt:'All fire prohibited; the area may be closed to entry.'};
+    case 'Burn Ban': return {ok:false,txt:'Open burning prohibited.'};
+    default: return {ok:null,txt:'Restriction level not tracked on this map yet - open the official link to confirm.'};
+  }
+}
+function stageLabel(s){return s==='None'?'No restrictions':s;}
+const map=L.map('map',{zoomControl:true}).setView([40.05,-105.65],9);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:17,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+const areaList=document.getElementById('arealist');
+const statusMsg=document.getElementById('status-msg');
+const rendered=[];
+function popupHtml(title,stage,sub,orderUrl,kind){
+  const g=fireGuidance(stage); const cls=g.ok===true?'ok':(g.ok===false?'no':'');
+  let h='<div class="pop"><h3>'+title+'</h3><span class="pop-st" style="background:'+colorFor(stage)+'">'+stageLabel(stage)+'</span>';
+  if(kind==='blm') h+=' <span class="badge live">LIVE feed</span>';
+  if(sub) h+='<div class="note">'+sub+'</div>';
+  h+='<div class="fire '+cls+'">🔥 '+g.txt+'</div>';
+  if(orderUrl) h+='<div class="note">→ <a href="'+orderUrl+'" target="_blank" rel="noopener">Official order / details</a></div>';
+  return h+'</div>';
+}
+function addAreaRow(name,stage,sub,url){
+  rendered.push({name,stage});
+  const d=document.createElement('div'); d.className='area';
+  let h='<div class="nm">'+name+'</div><span class="st" style="background:'+colorFor(stage)+'">'+stageLabel(stage)+'</span>';
+  if(sub) h+='<div class="ds">'+sub+'</div>';
+  if(url) h+='<div class="ds">→ <a href="'+url+'" target="_blank" rel="noopener">Check / official source</a></div>';
+  d.innerHTML=h; areaList.appendChild(d);
+}
+// Counties (baked)
+L.geoJSON(COUNTIES,{
+  style:f=>{const s=(COUNTY_STATUS[f.properties.NAME]||{});const known=!!s.status;const ho=known&&s.status.indexOf('No order')<0;return {color:'#444',weight:1,fillColor:known?(ho?'#f9a825':'#2e7d32'):'#9e9e9e',fillOpacity:0.10,dashArray:'4 3'};},
+  onEachFeature:(f,layer)=>{const nm=f.properties.NAME;const s=COUNTY_STATUS[nm]||{};const ho=s.status&&s.status.indexOf('No order')<0;const sub='County jurisdiction (private / unincorporated land). '+(s.status||'Status unknown')+'. A county order can differ from the federal land it surrounds.';layer.bindPopup('<div class="pop"><h3>'+nm+'</h3><span class="pop-st" style="background:'+(ho?'#f9a825':(s.status?'#2e7d32':'#9e9e9e'))+'">'+(s.status||'Unknown')+'</span><div class="note">'+sub+'</div>'+(s.url?'<div class="note">→ <a href="'+s.url+'" target="_blank" rel="noopener">County fire page</a></div>':'')+'</div>');}
+}).addTo(map);
+Object.keys(COUNTY_STATUS).forEach(nm=>{const s=COUNTY_STATUS[nm];const ho=s.status.indexOf('No order')<0;addAreaRow(nm+' (county)',ho?'Stage 1':'None',s.status+' - level varies, check county',s.url);});
+// USFS ranger districts (live boundaries)
+const usfsUrl="https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_RangerDistricts_01/MapServer/0/query?where="+encodeURIComponent("forestname LIKE '%Roosevelt%'")+"&outFields=districtname,districtorgcode&outSR=4326&maxAllowableOffset=0.001&f=geojson";
+fetch(usfsUrl).then(r=>r.json()).then(gj=>{
+  L.geoJSON(gj,{style:f=>{const s=USFS_STATUS[f.properties.districtorgcode]||{stage:'Unknown'};return {color:'#1b3a26',weight:1.5,fillColor:colorFor(s.stage),fillOpacity:0.5};},
+    onEachFeature:(f,layer)=>{const code=f.properties.districtorgcode;const s=USFS_STATUS[code]||{name:f.properties.districtname,stage:'Unknown'};const sub='National Forest land (dispersed-camping country)'+(s.counties?(' &middot; in '+s.counties+' Co.'):'')+'<br><span class="note">USFS status as of '+META.usfs_as_of+'</span>';layer.bindPopup(popupHtml(s.name||f.properties.districtname,s.stage,sub,s.order,'usfs'));}
+  }).addTo(map);
+  Object.keys(USFS_STATUS).forEach(code=>{const s=USFS_STATUS[code];addAreaRow(s.name+' (USFS)',s.stage,'National Forest &middot; '+s.counties+' Co.',s.order);});
+  refreshCampfireSummary();
+}).catch(e=>{statusMsg.innerHTML+='<div>⚠ Could not load live USFS boundaries ('+e+'). If layers are blank, see the local-server step in the instructions. USFS status still listed below.</div>';Object.keys(USFS_STATUS).forEach(code=>{const s=USFS_STATUS[code];addAreaRow(s.name+' (USFS)',s.stage,'National Forest &middot; '+s.counties+' Co. (boundary unavailable)',s.order);});refreshCampfireSummary();});
+// BLM (live feed)
+const blmUrl="https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/blm_co_fire_restrictions_VIEW_new/FeatureServer/0/query?where="+encodeURIComponent("COUNTY IN ('LARIMER','BOULDER','GRAND','GILPIN','CLEAR CREEK','JACKSON','JEFFERSON')")+"&outFields=PARENT_NAME,FieldOffice,COUNTY,restriction&outSR=4326&f=geojson";
+function blmStage(code){if(code==null)return 'Unknown';const c=(''+code).trim();if(c==='0'||c.toLowerCase()==='none')return 'None';if(c==='1'||/stage\s*1/i.test(c))return 'Stage 1';if(c==='2'||/stage\s*2/i.test(c))return 'Stage 2';if(c==='3'||/stage\s*3/i.test(c))return 'Stage 3';if(/ban/i.test(c))return 'Burn Ban';return 'Unknown';}
+function titleCase(s){return (s||'').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());}
+fetch(blmUrl).then(r=>r.json()).then(gj=>{
+  if(!gj.features||!gj.features.length){statusMsg.innerHTML+='<div>No BLM parcels returned for this region.</div>';return;}
+  const seen={};
+  L.geoJSON(gj,{style:f=>{const st=blmStage(f.properties.restriction);return {color:'#3a2c10',weight:1,fillColor:colorFor(st),fillOpacity:0.55};},
+    onEachFeature:(f,layer)=>{const st=blmStage(f.properties.restriction);const fo=titleCase(f.properties.FieldOffice||'BLM');const sub='BLM land &middot; '+fo+' &middot; '+titleCase(f.properties.COUNTY||'')+' Co.';layer.bindPopup(popupHtml('BLM - '+fo,st,sub,'https://www.blm.gov/programs/public-safety-and-fire/fire-and-aviation/regional-information/colorado','blm'));if(!(fo in seen))seen[fo]=st;}
+  }).addTo(map);
+  Object.keys(seen).forEach(fo=>addAreaRow('BLM - '+fo,seen[fo],'BLM land (live feed)',null));
+  refreshCampfireSummary();
+}).catch(e=>{statusMsg.innerHTML+='<div>⚠ Could not load live BLM feed ('+e+').</div>';});
+function refreshCampfireSummary(){
+  const green=rendered.filter(r=>r.stage==='None').map(r=>r.name);
+  let html='<div class="callout" style="margin-top:6px"><b>🔥 Campfire currently allowed in:</b><br>';
+  html+=green.length?green.join(', '):'No areas in this region currently allow an open campfire. Use a gas stove, or check back.';
+  html+='</div>';
+  let box=document.getElementById('greenbox');
+  if(!box){box=document.createElement('div');box.id='greenbox';areaList.parentNode.insertBefore(box,areaList);}
+  box.innerHTML=html;
+}
+document.getElementById('foot').innerHTML='Proof of concept built '+META.build_date+'. BLM = live official feed. USFS status as of '+META.usfs_as_of+'; county status as of '+META.county_as_of+' (edit the status table to update). Boundaries: USFS EDW, Esri/US Census. Informational only - always confirm with the official order linked in each popup before lighting any fire.';
+</script>
+</body>
+</html>
