@@ -59,7 +59,7 @@
       <div class="legend-row"><span class="sw" style="background:#f9a825"></span> Stage 1 — developed-site grates only</div>
       <div class="legend-row"><span class="sw" style="background:#e65100;opacity:.5"></span> Stage 2 — no campfire</div>
       <div class="legend-row"><span class="sw" style="background:#c62828;opacity:.5"></span> Stage 3 / Ban / Closure</div>
-      <div class="legend-row"><span class="sw" style="background:repeating-linear-gradient(45deg,#b71c1c,#b71c1c 3px,transparent 3px,transparent 6px);"></span> Active Red Flag Warning (NWS, live)</div>
+      <div class="legend-row"><span class="sw" style="background:rgba(183,28,28,.12);border:2px dashed #b71c1c"></span> Active Red Flag Warning (NWS, live)</div>
       <h2 style="margin-top:16px">Current status by area</h2>
       <div id="arealist"></div>
       <div id="status-msg"></div>
@@ -555,6 +555,7 @@ function titleCase(s){return (s||'').toLowerCase().replace(/\b\w/g,c=>c.toUpperC
 
 const map=L.map('map',{zoomControl:true}).setView([39.3,-105.5],8);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:17,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+map.createPane('rfwPane'); map.getPane('rfwPane').style.zIndex=450; map.getPane('rfwPane').style.pointerEvents='none';
 const areaList=document.getElementById('arealist'); const statusMsg=document.getElementById('status-msg'); const rendered=[];
 let spotlight=false, countyLayer=null, usfsLayer=null, blmLayer=null;
 let rfwCounties=new Set();             // auto-restrict counties currently under a Red Flag Warning
@@ -624,7 +625,7 @@ function drawBLM(){fetch(blmUrl).then(r=>r.json()).then(gj=>{if(!gj.features||!g
 }).catch(e=>{statusMsg.innerHTML+='<div>⚠ BLM feed could not load ('+e+').</div>';});}
 
 // ---- Red Flag Warnings first: paint zones AND flip auto-restrict counties ----
-const RFWSTYLE={color:'#b71c1c',weight:2,fillColor:'#b71c1c',fillOpacity:0.18,dashArray:'5 4'};
+const RFWSTYLE={pane:'rfwPane',color:'#b71c1c',weight:2.5,fillColor:'#b71c1c',fillOpacity:0.12,dashArray:'6 4'};
 function rfwPopup(txt){return '<div class="pop"><h3>⚠ Red Flag Warning</h3><div class="why">'+txt+' Issued by the National Weather Service. Counties that auto-restrict on Red Flag are flipped to Stage 1 on this map while it is active.</div><div class="note">→ <a href="https://www.weather.gov/fire/" target="_blank" rel="noopener">NWS fire weather</a></div></div>';}
 function matchRFWCounties(geoms){const zc=geoms.map(g=>{try{const b=L.geoJSON(g).getBounds().getCenter();return [b.lng,b.lat];}catch(e){return null;}});
   Object.keys(COUNTY_STATUS).forEach(nm=>{let hit=false;const c=countyCentroid[nm];
@@ -635,12 +636,12 @@ function finishDraw(){drawCounties();drawUSFS();drawBLM();}
 const rfwUrl='https://api.weather.gov/alerts/active?area=CO&event='+encodeURIComponent('Red Flag Warning');
 fetch(rfwUrl,{headers:{'Accept':'application/geo+json'}}).then(r=>r.json()).then(d=>{
   const feats=(d&&d.features)||[];const names=[];const zoneUrls=new Set();const geoms=[];
-  feats.forEach(ft=>{const p=ft.properties||{};names.push(p.areaDesc||'Red Flag area');(p.affectedZones||[]).forEach(u=>zoneUrls.add(u));if(ft.geometry){geoms.push(ft.geometry);L.geoJSON(ft.geometry,{style:RFWSTYLE}).bindPopup(rfwPopup(p.headline||'')).addTo(gRFW);}});
+  feats.forEach(ft=>{const p=ft.properties||{};names.push(p.areaDesc||'Red Flag area');(p.affectedZones||[]).forEach(u=>zoneUrls.add(u));if(ft.geometry){geoms.push(ft.geometry);L.geoJSON(ft.geometry,{pane:'rfwPane',style:RFWSTYLE}).bindPopup(rfwPopup(p.headline||'')).addTo(gRFW);}});
   let box=document.getElementById('rfwbox');if(!box){box=document.createElement('div');box.id='rfwbox';areaList.parentNode.insertBefore(box,areaList);}
   if(feats.length){box.innerHTML='<div class="callout" style="background:#fde7e7;border-color:#f5cdc6"><b>⚠ '+feats.length+' active Red Flag Warning(s):</b><br>'+[...new Set(names)].join('; ')+'<br><span class="note">Auto-rule counties under these are flipped to Stage 1 below.</span></div>';}
   else{box.innerHTML='<div class="callout"><b>No active Red Flag Warnings</b> in Colorado right now.</div>';}
   Promise.all([...zoneUrls].map(u=>fetch(u,{headers:{'Accept':'application/geo+json'}}).then(r=>r.json()).catch(()=>null))).then(zs=>{
-    zs.forEach(z=>{if(z&&z.geometry){geoms.push(z.geometry);L.geoJSON(z.geometry,{style:RFWSTYLE}).bindPopup(rfwPopup(((z.properties&&z.properties.name)||'Fire-weather zone')+' — under an active Red Flag Warning.')).addTo(gRFW);}});
+    zs.forEach(z=>{if(z&&z.geometry){geoms.push(z.geometry);L.geoJSON(z.geometry,{pane:'rfwPane',style:RFWSTYLE}).bindPopup(rfwPopup(((z.properties&&z.properties.name)||'Fire-weather zone')+' — under an active Red Flag Warning.')).addTo(gRFW);}});
     matchRFWCounties(geoms);finishDraw();
   }).catch(()=>{matchRFWCounties(geoms);finishDraw();});
 }).catch(e=>{statusMsg.innerHTML+='<div>⚠ Could not load Red Flag Warnings ('+e+').</div>';finishDraw();});
