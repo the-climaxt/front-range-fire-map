@@ -2,7 +2,7 @@ name: Update fire map
 on:
   schedule:
     - cron: "0 13 * * *"   # ~7am Mountain, daily
-  workflow_dispatch:        # adds a "Run workflow" button
+  workflow_dispatch:        # lets you run it manually from the Actions tab
   push:
     paths: ["map_template3.html","co_counties_all.geojson","build.py"]
 permissions:
