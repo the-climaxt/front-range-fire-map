@@ -100,7 +100,7 @@
       <div class="legend-row"><span class="sw" style="background:#c62828;opacity:.6"></span> Stage 3 — closure / total ban</div>
       <div class="legend-row"><span class="sw" style="background:#9e9e9e;opacity:.6"></span> Not confirmed — check the official order</div>
       <div class="legend-row"><span class="sw" style="background:#546e7a;opacity:.6"></span> City & County (Denver/Broomfield) — municipal rules</div>
-      <div class="legend-row"><span class="sw" style="background:rgba(183,28,28,.12);border:2px dashed #b71c1c"></span> Red Flag Warning (NWS, live) — see note in popup</div>
+      <div class="legend-row"><span class="sw" style="background:rgba(183,28,28,.12);border:2px dashed #b71c1c"></span> Red Flag Warning (NWS, live) — tap inside it for details</div>
       <h2>Current status by area</h2>
       <div id="arealist"></div>
       <div id="status-msg"></div>
@@ -154,7 +154,9 @@ COUNTIES.features.forEach(f=>{countyGeom[f.properties.NAME]=f.geometry;});
 function countyAtPoint(pt){for(const nm in countyGeom){if(R.pointInGeom(pt,countyGeom[nm]))return nm;}return null;}
 
 /* ================= county rules state ================= */
-let rfwCounties=new Set();       // counties under an active RFW (advisory for all; legal flip only for auto-rule counties)
+let rfwCounties=new Set();       // counties touched by an active RFW (legal flip only for auto-rule counties)
+let rfwGeoms=[];                 // active warning shapes, for point-exact "is THIS spot under a Red Flag?" tests
+function rfwAt(pt){for(const z of rfwGeoms){if(R.pointInGeom(pt,z.g))return z;}return null;}
 function countyOrder(nm){
   const s=COUNTY_STATUS[nm];
   if(!s)return{stage:R.UNKNOWN,verified:false,floor:false,kind:'county',redFlagAuto:false,rfwActive:false,url:null,asOf:null,note:''};
@@ -228,31 +230,42 @@ function countyLineHtml(cnm,o){
   else t+='order status not confirmed';
   if(o.note)t+='<br><span class="qn">'+esc(o.note)+'</span>';
   return '<div class="asof">'+t+'</div>';}
-function rfwLineHtml(o){
-  if(!o||!o.rfwActive)return '';
-  if(o.redFlagAuto)return '<div class="src alert">⚠ Red Flag Warning → <b>Stage 1 automatically in effect</b> (this county has a verified auto-restriction rule).</div>';
-  return '<div class="src alert">⚠ <b>Red Flag Warning here now</b> — extreme fire weather (NWS). Not itself a legal restriction in this county, but conditions are dangerous and restrictions can change today.</div>';}
+function rfwLineHtml(co,rfwHere){
+  const auto=!!(co&&co.redFlagAuto&&co.rfwActive);
+  if(rfwHere){
+    const zl=rfwHere.label?' — '+esc(String(rfwHere.label).slice(0,90)):'';
+    return auto?'<div class="src alert">⚠ <b>Red Flag Warning covers this exact spot</b>'+zl+'. This county auto-triggers <b>Stage 1</b> during Red Flag Warnings — already reflected in the answer above.</div>'
+               :'<div class="src alert">⚠ <b>Red Flag Warning covers this exact spot</b>'+zl+'. Extreme fire weather (NWS) — not itself a legal restriction in this county, but conditions are dangerous and restrictions can change today.</div>';
+  }
+  if(co&&co.rfwActive){
+    return auto?'<div class="src alert">⚠ A Red Flag Warning covers part of this county today → the county rule auto-triggers <b>Stage 1 county-wide</b> (already reflected above).</div>'
+               :'<div class="src alert">⚠ A Red Flag Warning covers <b>part of this county</b> today (not this exact spot, per NWS fire-weather zones). Conditions are dangerous; restrictions can change today.</div>';
+  }
+  return '';}
 function blmFeedLine(){if(!blmFeedDate)return '';
   const age=(Date.now()-blmFeedDate)/86400000;
   return '<div class="asof">BLM feed last updated '+esc(fmtEpoch(blmFeedDate))+(age>7?' <span class="warn">— may lag current orders; check the BLM Colorado fire page</span>':'')+'</div>';}
 
 /* ONE answer for any point — a map tap and the 📍 button produce the SAME
  * output: every authority at the exact spot, strictest wins, with as-of
- * dates, "On:" line, and layer-failure warnings. */
+ * dates, "On:" line, Red-Flag status, and layer-failure warnings. */
 function answerAt(latlng,titleOverride){
   const pt=[latlng.lng,latlng.lat]; const j=jurisAt(pt);
   const co=j.county?countyOrder(j.county):null;
   const isMuni=!!(co&&co.kind==='municipal');
+  const rfwHere=rfwAt(pt);
   if(!j.county&&!j.usfs&&!j.blm){
     return '<div class="pop"><h3>'+esc(titleOverride||'This spot')+'</h3>'+pill(R.UNKNOWN)
       +actTable(R.UNKNOWN,'cty')
       +'<div class="src">Not inside this map’s coverage — or a National Park, city, or tribal land, whose authorities are not shown here. Check the local land manager.</div>'
+      +rfwLineHtml(null,rfwHere)
       +DISCLAIMER+'</div>';
   }
   if(isMuni&&!j.usfs&&!j.blm){
     return '<div class="pop"><h3>'+esc(titleOverride||j.county)+'</h3>'
       +'<span class="pop-st" style="background:'+COLOR.municipal+'">Municipal rules</span>'
       +'<div class="src">'+esc(j.county)+' is a consolidated city &amp; county — fire rules are set by the city (open burning is generally prohibited), not by county stage orders. Check the city website.</div>'
+      +rfwLineHtml(co,rfwHere)
       +DISCLAIMER
       +(co.url?'<div class="note">→ <a href="'+esc(co.url)+'" target="_blank" rel="noopener">Official city source</a></div>':'')+'</div>';
   }
@@ -278,7 +291,7 @@ function answerAt(latlng,titleOverride){
   h+='<div class="src">On: '+[j.usfs&&(j.usfs.name+(j.usfs.forest?' ('+j.usfs.forest+')':'')),j.blm&&('BLM — '+j.blm.fo),j.county].filter(Boolean).map(esc).join(' · ')+'.</div>';
   if(!usfsLoaded)h+='<div class="src alert">⚠ Forest boundaries didn’t load — national-forest rules were NOT checked for this spot.</div>';
   if(!blmLoaded&&!DEMO)h+='<div class="src alert">⚠ BLM feed didn’t load — BLM rules were NOT checked for this spot.</div>';
-  h+=rfwLineHtml(co);
+  h+=rfwLineHtml(co,rfwHere);
   h+=countyLineHtml(j.county,co);
   if(j.usfs&&j.usfs.forest)h+='<div class="asof">Forest level '+(j.usfs.verified?'checked '+esc(j.usfs.checked||META.build_date):'<span class="warn">as of '+esc(j.usfs.checked||META.usfs_baked_asof||'?')+' — could not be re-verified; may be stale</span>')+'</div>';
   if(j.blm)h+=blmFeedLine();
@@ -382,9 +395,10 @@ function loadRFW(){
   jfetch(rfwUrl,{headers:{'Accept':'application/geo+json'}}).then(d=>{
     const feats=(d&&d.features)||[]; const zoneUrls=new Set(); const geoms=[];
     feats.forEach(ft=>{const p=ft.properties||{};(p.affectedZones||[]).forEach(u=>{if(/^https:\/\/api\.weather\.gov\//.test(u))zoneUrls.add(u);});
-      if(ft.geometry){geoms.push(ft.geometry);L.geoJSON(ft.geometry,{pane:'rfwPane',style:RFWSTYLE}).bindPopup(rfwZonePopup(p.headline||'')).addTo(gRFW);}});
+      if(ft.geometry){geoms.push(ft.geometry);rfwGeoms.push({g:ft.geometry,label:p.headline||'Red Flag Warning'});
+        L.geoJSON(ft.geometry,{pane:'rfwPane',style:RFWSTYLE}).addTo(gRFW);}});
     const box=document.getElementById('rfwbox');
-    box.innerHTML=feats.length?'<div class="callout" style="background:#fde7e7;border-color:#f5cdc6"><b>⚠ '+feats.length+' Red Flag Warning'+(feats.length>1?'s':'')+' active</b> (red-dashed areas). Legal auto-restrictions only in counties with a verified auto-rule; elsewhere: advisory.</div>'
+    box.innerHTML=feats.length?'<div class="callout" style="background:#fde7e7;border-color:#f5cdc6"><b>⚠ '+feats.length+' Red Flag Warning'+(feats.length>1?'s':'')+' active</b> (red-dashed areas — tap inside one for details). Legal auto-restrictions only in counties with a verified auto-rule; elsewhere: advisory.</div>'
       :'<div class="callout"><b>No active Red Flag Warnings</b> in Colorado right now.</div>';
     const chip=document.getElementById('rfwchip');
     if(feats.length){chip.style.display='block';chip.textContent='⚠ '+feats.length+' Red Flag Warning'+(feats.length>1?'s':'')+' — tap for info';
@@ -392,7 +406,8 @@ function loadRFW(){
     statusSet('rfw','✓ '+feats.length+' active');
     Promise.all([...zoneUrls].map(u=>jfetch(u,{headers:{'Accept':'application/geo+json'}}).catch(()=>null))).then(zs=>{
       let failed=0;
-      zs.forEach(z=>{if(z&&z.geometry){geoms.push(z.geometry);L.geoJSON(z.geometry,{pane:'rfwPane',style:RFWSTYLE}).bindPopup(rfwZonePopup(((z.properties&&z.properties.name)||'Fire-weather zone')+' — under an active Red Flag Warning.')).addTo(gRFW);}else failed++;});
+      zs.forEach(z=>{if(z&&z.geometry){geoms.push(z.geometry);rfwGeoms.push({g:z.geometry,label:((z.properties&&z.properties.name)||'fire-weather zone')+' zone'});
+        L.geoJSON(z.geometry,{pane:'rfwPane',style:RFWSTYLE}).addTo(gRFW);}else failed++;});
       if(failed)statusSet('rfw','✓ '+feats.length+' active <span class="warn">('+failed+' zone shape'+(failed>1?'s':'')+' failed — warned area may display incompletely)</span>');
       matchRFWCounties(geoms);restyleAll();renderAreaList();
     });
