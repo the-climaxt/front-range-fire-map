@@ -91,7 +91,7 @@
       <div id="answer"></div>
       <div id="rfwbox"></div>
       <div id="greenbox"></div>
-      <div class="callout">Tap the <b>📍 button</b> for what's allowed where you're standing, or tap any area on the map. <b>🔥</b> hides everywhere a campfire isn't currently possible.</div>
+      <div class="callout">Tap <b>anywhere on the map</b> for that exact spot's full allowed / not-allowed answer, or the <b>📍 button</b> for where you're standing. <b>🔥</b> hides everywhere a campfire isn't currently possible.</div>
       <h2>Legend — restriction stage (not fire danger)</h2>
       <div class="legend-row"><span class="sw" style="background:#2e7d32"></span> <b>No known restrictions</b> — open campfire likely OK</div>
       <div class="legend-row"><span class="sw" style="background:#f9a825"></span> Stage 1 — developed-site fire grates only</div>
@@ -236,50 +236,59 @@ function blmFeedLine(){if(!blmFeedDate)return '';
   const age=(Date.now()-blmFeedDate)/86400000;
   return '<div class="asof">BLM feed last updated '+esc(fmtEpoch(blmFeedDate))+(age>7?' <span class="warn">— may lag current orders; check the BLM Colorado fire page</span>':'')+'</div>';}
 
-/* answer for federal land (USFS district or BLM parcel) at an exact point */
-function federalAnswer(opt){
-  const cnm=opt.latlng?countyAtPoint([opt.latlng.lng,opt.latlng.lat]):null;
-  const co=cnm?countyOrder(cnm):null;
-  const countyStage=(co&&co.kind!=='municipal')?co.stage:null;
-  const eff=R.effective([opt.stage,countyStage]);
+/* ONE answer for any point — a map tap and the 📍 button produce the SAME
+ * output: every authority at the exact spot, strictest wins, with as-of
+ * dates, "On:" line, and layer-failure warnings. */
+function answerAt(latlng,titleOverride){
+  const pt=[latlng.lng,latlng.lat]; const j=jurisAt(pt);
+  const co=j.county?countyOrder(j.county):null;
+  const isMuni=!!(co&&co.kind==='municipal');
+  if(!j.county&&!j.usfs&&!j.blm){
+    return '<div class="pop"><h3>'+esc(titleOverride||'This spot')+'</h3>'+pill(R.UNKNOWN)
+      +actTable(R.UNKNOWN,'cty')
+      +'<div class="src">Not inside this map’s coverage — or a National Park, city, or tribal land, whose authorities are not shown here. Check the local land manager.</div>'
+      +DISCLAIMER+'</div>';
+  }
+  if(isMuni&&!j.usfs&&!j.blm){
+    return '<div class="pop"><h3>'+esc(titleOverride||j.county)+'</h3>'
+      +'<span class="pop-st" style="background:'+COLOR.municipal+'">Municipal rules</span>'
+      +'<div class="src">'+esc(j.county)+' is a consolidated city &amp; county — fire rules are set by the city (open burning is generally prohibited), not by county stage orders. Check the city website.</div>'
+      +DISCLAIMER
+      +(co.url?'<div class="note">→ <a href="'+esc(co.url)+'" target="_blank" rel="noopener">Official city source</a></div>':'')+'</div>';
+  }
+  const fedStage=j.usfs?j.usfs.stage:null, blmSt=j.blm?j.blm.stage:null;
+  const ctyStage=(co&&!isMuni)?co.stage:null;
+  const eff=R.effective([ctyStage,fedStage,blmSt]);
   const showUnknown=eff.anyUnknown&&eff.stage==='None';
-  let h='<div class="pop"><h3>'+esc(opt.title)+'</h3>';
-  h+=pill(showUnknown?R.UNKNOWN:eff.stage)+(opt.badge?' <span class="badge">'+esc(opt.badge)+'</span>':'');
-  h+=actTable(showUnknown?R.UNKNOWN:eff.stage,'fed');
+  const onFed=!!(j.usfs||j.blm);
+  const title=titleOverride||(j.usfs?j.usfs.name+(j.usfs.forest?' ('+j.usfs.forest+')':''):(j.blm?'BLM — '+j.blm.fo:j.county));
+  let h='<div class="pop"><h3>'+esc(title)+'</h3>';
+  h+=pill(showUnknown?R.UNKNOWN:eff.stage)+((j.blm&&!DEMO)?' <span class="badge">BLM live feed</span>':'');
+  h+=actTable(showUnknown?R.UNKNOWN:eff.stage,onFed?'fed':'cty');
   if(eff.anyUnknown&&!showUnknown)h+='<div class="src alert">One authority’s level could not be verified — the true rule may be stricter. Check the links.</div>';
   if(!showUnknown){
-    const sa=R.SEV[R.normalizeStage(opt.stage)]??-1, sc=co&&R.isKnown(co.stage)?R.SEV[co.stage]:-1;
-    const by=(sc>sa)?('the '+esc(cnm)+' order'+((co&&co.rfwActive&&co.redFlagAuto)?' (Red Flag auto-restriction)':'')):
-             (sc===sa&&sc>=0)?('both the '+esc(opt.agency)+' and '+esc(cnm)+' orders'):('the '+esc(opt.agency)+' order');
-    h+='<div class="src">Set by <b>'+by+'</b> — the strictest rule covering this exact spot.</div>';}
-  h+=countyLineHtml(cnm,co);
+    const parts=[];
+    if(ctyStage!==null&&R.isKnown(R.normalizeStage(ctyStage)))parts.push({n:'the '+esc(j.county)+' order'+((co.rfwActive&&co.redFlagAuto)?' (Red Flag auto-restriction)':''),s:R.SEV[R.normalizeStage(ctyStage)]});
+    if(fedStage!==null&&R.isKnown(R.normalizeStage(fedStage)))parts.push({n:'the '+esc(j.usfs.forest||j.usfs.name)+' order',s:R.SEV[R.normalizeStage(fedStage)]});
+    if(blmSt!==null&&R.isKnown(R.normalizeStage(blmSt)))parts.push({n:'the BLM order',s:R.SEV[R.normalizeStage(blmSt)]});
+    const mx=parts.length?Math.max.apply(null,parts.map(p=>p.s)):0;
+    const setters=parts.filter(p=>p.s===mx&&mx>0).map(p=>p.n);
+    h+='<div class="src">'+(setters.length?('Set by <b>'+setters.join('</b> and <b>')+'</b> — the strictest rule covering this exact spot.'):'No order covers this spot right now — general fire-safety law still applies (clear the area, never leave a fire).')+'</div>';
+  }
+  h+='<div class="src">On: '+[j.usfs&&(j.usfs.name+(j.usfs.forest?' ('+j.usfs.forest+')':'')),j.blm&&('BLM — '+j.blm.fo),j.county].filter(Boolean).map(esc).join(' · ')+'.</div>';
+  if(!usfsLoaded)h+='<div class="src alert">⚠ Forest boundaries didn’t load — national-forest rules were NOT checked for this spot.</div>';
+  if(!blmLoaded&&!DEMO)h+='<div class="src alert">⚠ BLM feed didn’t load — BLM rules were NOT checked for this spot.</div>';
   h+=rfwLineHtml(co);
-  if(opt.asOf)h+='<div class="asof">'+opt.asOf+'</div>';
-  if(opt.kind==='blm')h+=blmFeedLine();
+  h+=countyLineHtml(j.county,co);
+  if(j.usfs&&j.usfs.forest)h+='<div class="asof">Forest level '+(j.usfs.verified?'checked '+esc(j.usfs.checked||META.build_date):'<span class="warn">as of '+esc(j.usfs.checked||META.usfs_baked_asof||'?')+' — could not be re-verified; may be stale</span>')+'</div>';
+  if(j.blm)h+=blmFeedLine();
   h+=DISCLAIMER;
   let lk='';
-  if(opt.orderUrl)lk+='<a href="'+esc(opt.orderUrl)+'" target="_blank" rel="noopener">Official order / alerts</a>';
+  if(j.usfs&&j.usfs.forest){const u=fsUrl(j.usfs.forest,'alerts');if(u)lk+='<a href="'+esc(u)+'" target="_blank" rel="noopener">Forest order / alerts</a>';
+    const mv=fsUrl(j.usfs.forest,'maps-guides');if(mv)lk+=' · <a href="'+esc(mv)+'" target="_blank" rel="noopener">🚙 Roads &amp; camping map</a>';}
+  if(j.blm)lk+=(lk?' · ':'')+'<a href="https://www.blm.gov/programs/public-safety-and-fire/fire-and-aviation/regional-information/colorado" target="_blank" rel="noopener">BLM Colorado fire page</a>';
   if(co&&co.url)lk+=(lk?' · ':'')+'<a href="'+esc(co.url)+'" target="_blank" rel="noopener">County source</a>';
-  if(opt.mvumUrl)lk+=(lk?'<br>':'')+'<a href="'+esc(opt.mvumUrl)+'" target="_blank" rel="noopener">🚙 Roads &amp; dispersed-camping map</a>';
   if(lk)h+='<div class="note">'+lk+'</div>';
-  return h+'</div>';
-}
-function countyAnswer(nm){
-  const o=countyOrder(nm);
-  let h='<div class="pop"><h3>'+esc(nm)+'</h3>';
-  if(o.kind==='municipal'){
-    h+='<span class="pop-st" style="background:'+COLOR.municipal+'">Municipal rules</span>';
-    h+='<div class="src">'+esc(nm)+' is a consolidated city &amp; county — fire rules are set by the city (open burning is generally prohibited), not by county stage orders. Check the city website.</div>';
-  }else{
-    h+=pill(o.stage)+' <span class="chk '+(o.verified?'y':'n')+'">'+(o.verified?'verified '+esc(o.asOf||''):(o.floor?'at least Stage 1 — unverified':'unverified'))+'</span>';
-    h+=actTable(o.stage,'cty');
-    if(o.floor&&!o.verified)h+='<div class="src">An order is assumed for this county but its level has <b>not been verified</b> — “at least Stage 1” is a conservative floor, and the real order may be stricter (or absent). Check the county source.</div>';
-    else h+='<div class="src">County orders cover <b>unincorporated</b> private, state, and federal land. Inside city/town limits, the municipality’s rules apply — check your city.</div>';
-  }
-  h+=rfwLineHtml(o);
-  if(o.note)h+='<div class="asof">'+esc(o.note)+'</div>';
-  h+=DISCLAIMER;
-  if(o.url)h+='<div class="note">→ <a href="'+esc(o.url)+'" target="_blank" rel="noopener">Official county / city source</a></div>';
   return h+'</div>';
 }
 
@@ -293,15 +302,17 @@ function showAnswer(html,latlng){
   else L.popup({maxWidth:300}).setLatLng(latlng).setContent(html).openOn(map);
 }
 
-/* ================= layers (drawn IMMEDIATELY — not gated on any feed; AUDIT C1) ================= */
-function countyClick(f){return function(e){L.DomEvent.stop(e);showAnswer(countyAnswer(f.properties.NAME),e.latlng);};}
-function drawCounties(){countyLayer=L.geoJSON(COUNTIES,{style:styleCounty,onEachFeature:(f,ly)=>{ly.on('click',countyClick(f));}}).addTo(map);}
+/* ================= layers (drawn IMMEDIATELY — not gated on any feed; AUDIT C1) =================
+ * All polygon layers are interactive:false — a single map-level click handler
+ * gives the SAME combined answer everywhere (identical to the 📍 button). */
+function drawCounties(){countyLayer=L.geoJSON(COUNTIES,{style:styleCounty,interactive:false}).addTo(map);}
 
 const FOREST_SLUG={"Arapaho-Roosevelt NF":"arp","Pike-San Isabel NF":"psicc","White River NF":"whiteriver","GMUG NF":"gmug","Rio Grande NF":"riogrande","San Juan NF":"sanjuan","Medicine Bow-Routt NF":"mbrtb"};
 function fsUrl(forest,path){const sl=FOREST_SLUG[forest];return sl?("https://www.fs.usda.gov/r02/"+sl+"/"+path):null;}
 function addAllowedMark(layer,label){try{const c=layer.getBounds().getCenter();
   const mk=L.marker(c,{icon:L.divIcon({className:'fire-ok',html:'🔥',iconSize:[20,20]})});
   mk.bindTooltip(esc(label)+' — open campfire likely OK',{direction:'top'});
+  mk.on('click',()=>showAnswer(answerAt(c),c));
   gAllowedMarks.addLayer(mk);}catch(e){}}
 
 const usfsWhere="forestname LIKE '%Roosevelt%' OR forestname LIKE '%San Isabel%' OR forestname LIKE '%White River%' OR forestname LIKE '%Uncompahgre%' OR forestname LIKE '%Rio Grande%' OR forestname LIKE '%San Juan%' OR forestname LIKE '%Medicine Bow%'";
@@ -309,12 +320,8 @@ const usfsUrl="https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_RangerDistric
 function drawUSFS(){jfetch(usfsUrl).then(gj=>{
   if(gj.error)throw new Error('ArcGIS error');
   usfsGeo=gj.features||[];usfsLoaded=true;
-  usfsLayer=L.geoJSON(gj,{filter:f=>!!USFS_STATUS[f.properties.districtorgcode],style:styleUSFS,
+  usfsLayer=L.geoJSON(gj,{filter:f=>!!USFS_STATUS[f.properties.districtorgcode],style:styleUSFS,interactive:false,
     onEachFeature:(f,ly)=>{const s=USFS_STATUS[f.properties.districtorgcode];
-      ly.on('click',e=>{L.DomEvent.stop(e);
-        showAnswer(federalAnswer({title:s.name,agency:s.forest,stage:s.stage,kind:'usfs',latlng:e.latlng,
-          asOf:'Forest level '+(s.verified?'checked '+esc(s.checked||META.build_date):'<span class="warn">as of '+esc(s.checked||META.usfs_baked_asof||'?')+' — could not be re-verified; may be stale</span>'),
-          orderUrl:fsUrl(s.forest,'alerts'),mvumUrl:fsUrl(s.forest,'maps-guides')}),e.latlng);});
       const fl=districtCountyFloor(s.counties);
       if(R.strictest(s.stage,fl.stage)==='None'&&s.verified)addAllowedMark(ly,s.name);}}).addTo(map);
   statusSet('usfs','✓ '+(META.usfs_note?esc(META.usfs_note):'loaded'));
@@ -329,15 +336,7 @@ function drawBLM(){jfetch(blmUrl).then(gj=>{
   if(gj.error)throw new Error('ArcGIS error');
   blmGeo=gj.features||[];blmLoaded=true;
   if(!blmGeo.length){statusSet('blm','<span class="warn">⚠ feed returned no areas</span>');renderAreaList();return;}
-  blmLayer=L.geoJSON(gj,{style:styleBLM,onEachFeature:(f,ly)=>{
-    ly.on('click',e=>{L.DomEvent.stop(e);
-      const st=DEMO?'None':R.blmStage(f.properties.restriction);
-      const fo=titleCase(f.properties.FieldOffice||'BLM');
-      const slug=/^[a-z][a-z .-]{2,40}$/i.test(fo)?fo.toLowerCase().replace(/[ .]+/g,'-'):null; // whitelist before URL use (AUDIT D1)
-      showAnswer(federalAnswer({title:'BLM — '+fo,agency:'BLM',stage:st,kind:'blm',latlng:e.latlng,
-        badge:DEMO?null:'BLM live feed',
-        orderUrl:'https://www.blm.gov/programs/public-safety-and-fire/fire-and-aviation/regional-information/colorado',
-        mvumUrl:slug?('https://www.blm.gov/office/'+slug):null}),e.latlng);});}}).addTo(map);
+  blmLayer=L.geoJSON(gj,{style:styleBLM,interactive:false}).addTo(map);
   statusSet('blm','✓ live');renderAreaList();
 }).catch(e=>{blmLoaded=false;statusSet('blm','<span class="warn">⚠ feed failed — BLM rules NOT shown</span>');
   document.getElementById('status-msg').innerHTML+='<div class="warn">⚠ BLM restrictions feed could not load — BLM land is not shown; check the BLM Colorado fire page.</div>';});}
@@ -410,23 +409,12 @@ function jurisAt(pt){
 }
 let locMarker=null;
 function onLoc(e){
-  const pt=[e.latlng.lng,e.latlng.lat];const j=jurisAt(pt);
-  const co=j.county?countyOrder(j.county):null;
-  const eff=R.effective([co&&co.kind!=='municipal'?co.stage:null,j.usfs?j.usfs.stage:null,j.blm?j.blm.stage:null]);
-  const showUnknown=eff.anyUnknown&&eff.stage==='None';
-  const where=[];if(j.usfs)where.push(j.usfs.name+(j.usfs.forest?' ('+j.usfs.forest+')':''));if(j.blm)where.push('BLM — '+j.blm.fo);if(j.county)where.push(j.county);
-  let h='<div class="pop"><h3>📍 Your location</h3>'+pill(showUnknown?R.UNKNOWN:eff.stage);
-  h+=actTable(showUnknown?R.UNKNOWN:eff.stage,(j.usfs||j.blm)?'fed':'cty');
-  if(eff.anyUnknown&&!showUnknown)h+='<div class="src alert">One authority’s level could not be verified — the true rule may be stricter.</div>';
-  h+='<div class="src">On: '+(where.length?where.map(esc).join(' · '):'unrecognized / private land')+'.</div>';
-  if(!usfsLoaded)h+='<div class="src alert">⚠ Forest boundaries didn’t load — national-forest rules were NOT checked for this spot.</div>';
-  if(!blmLoaded&&!DEMO)h+='<div class="src alert">⚠ BLM feed didn’t load — BLM rules were NOT checked for this spot.</div>';
-  h+=rfwLineHtml(co);h+=countyLineHtml(j.county,co);h+=DISCLAIMER+'</div>';
   if(locMarker)map.removeLayer(locMarker);
-  locMarker=L.marker(e.latlng).addTo(map);
-  showAnswer(h,e.latlng);
+  locMarker=L.marker(e.latlng,{interactive:false}).addTo(map);
+  showAnswer(answerAt(e.latlng,'📍 Your location'),e.latlng);
 }
 map.on('locationfound',onLoc);
+map.on('click',e=>showAnswer(answerAt(e.latlng),e.latlng)); // every tap = the full 📍-style answer
 map.on('locationerror',function(){showAnswer('<div class="pop"><h3>📍 Location unavailable</h3><div class="src">Allow location access when your browser asks (needs the https link, not a local file).</div></div>',map.getCenter());});
 
 /* ================= controls (48px FABs, bottom-right; AUDIT E2) ================= */
